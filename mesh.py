@@ -25,7 +25,7 @@ mesh.faces.place({'area': ti.f32}, needs_grad=True)
 
 total_area = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
 
-@ ti.kernel
+@ti.kernel
 def double_area():
     for f in mesh.faces:
         face_area = ti.f32(0.0)
