@@ -1,6 +1,10 @@
+#ref https://github.com/alecjacobson/libigl-autodiff-example/tree/main
 import taichi as ti
-import meshtaichi_patcher as Patcher 
-import argparse 
+import meshtaichi_patcher as Patcher
+import argparse
+import numpy as np
+
+import igl
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', default="./beetle.obj")
@@ -11,28 +15,43 @@ ti.init(arch=getattr(ti, args.arch))
 
 mesh = Patcher.load_mesh(args.model, relations=['FV'])
 
-mesh.verts.place({'x' : ti.math.vec3, 'normal' : ti.math.vec3}, needs_grad=True)
+# mesh.verts.place({'U': ti.math.vec3, 'normal': ti.math.vec3}, needs_grad=False)
 
-mesh.verts.x.from_numpy(mesh.get_position_as_numpy())
+mesh.verts.place({'U': ti.math.vec3}, needs_grad=True)
+mesh.verts.U.from_numpy(mesh.get_position_as_numpy())
 
-@ti.kernel
-def vertex_normal():    
+mesh.verts.place({'dfdU': ti.math.vec3}, needs_grad=True)
+mesh.faces.place({'area': ti.f32}, needs_grad=True)
+
+total_area = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
+
+@ ti.kernel
+def double_area():
     for f in mesh.faces:
-        v0 = f.verts[0]
-        v1 = f.verts[1]
-        v2 = f.verts[2]
+        face_area = ti.f32(0.0)
+        for x in range(3):
+            y = (x+1) % 3
+            rx = f.verts[0].U[x] - f.verts[2].U[x]
+            sx = f.verts[1].U[x] - f.verts[2].U[x]
+            ry = f.verts[0].U[y] - f.verts[2].U[y]
+            sy = f.verts[1].U[y] - f.verts[2].U[y]
+            face_area += rx*sy - ry*sx
+        f.area = face_area
+        ti.atomic_add(total_area[None], face_area)
 
-        n = (v0.x - v2.x).cross(v1.x - v2.x)
-        l = [(v0.x - v1.x).norm_sqr(),
-             (v1.x - v2.x).norm_sqr(),
-             (v2.x - v0.x).norm_sqr()]
 
-        for i in ti.static(range(3)):
-            f.verts[i].normal += n / (l[i] + l[(i + 2) % 3])
-            
-vertex_normal()
-n = mesh.verts.normal.to_numpy()
 
-#v, f = igl.read_triangle_mesh("./beetle.obj")
-#viewer = igl.viewer.Viewer()
-#plot(v, f, k)
+total_area[None] = 0
+total_area.grad[None] = 1
+
+with ti.ad.Tape(total_area):
+    double_area()          
+
+#double_area()
+#double_area().grad()
+
+print(total_area)
+
+grad_U = mesh.verts.U.grad.to_numpy()
+
+print(grad_U[1:10])
